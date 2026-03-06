@@ -1,127 +1,110 @@
-from exercises import *
+from util import nios2_as, get_debug, require_symbols
+from csim import Nios2
 import numpy as np
+import ctypes
 
 
-##############
-# Sum the array
-def check_op_three(asm):
+def check_project3_1_2(asm):
 
     new_start = """.text
     .global _start
     _start:
-  	 movia   sp, 0x04000000
-	 #movi r4, 1
-     #movi r5, 2   we will set input param
-     #movi r6, 3   we will set input param
-	 call op_three
-
-	 break
-
-
-     op_two_add:
-       add     r2, r4, r5
-       ret
-
-
-     op_two_mul:
-      mul r2, r4, r5
-      ret
-    
-    op_two_xor:
-      xor r2, r4, r5
-      ret
+        movia   sp, 0x03fffffc
+        call    op_three
+        break
 
     op_two:
-      # Prologue (save return address)
-      subi    sp, sp, 4
-      stw     ra, 0(sp)
-    
+        movia   r15, 0x13371000
+        stwio   r4, 0(r15)      # write a
+        stwio   r5, 4(r15)      # write b (triggers computation, stores result)
 
-      cmpeqi r10, r7, 0
-      movi   r11, 1
-    
+        # trash caller-saved registers to test ABI compliance
+        movui   r4, 0xdead
+        movui   r5, 0xbeef
+        movui   r6, 0xcafe
+        movui   r7, 0xbabe
+        movui   r8, 0x1111
+        movui   r9, 0x2222
+        movui   r10, 0x3333
+        movui   r11, 0x4444
+        movui   r12, 0x5555
+        movui   r13, 0x6666
+        movui   r14, 0x7777
 
-      beq    r10, r11,  1f 
-      br 2f
+        ldwio   r2, 4(r15)      # read result
 
-    1:
-      call op_two_add
-      br done
-      
-    
-    2:  
-      cmpeqi r10, r7, 1
-      movi   r11, 1
-      beq r10, r11, 3f
-      br 4f
-
-    3:
-      call op_two_mul
-      br done
-
-    4:
-      call op_two_xor
-      br done
-
-    done:
-      # Epilogue (restore return address)
-      ldw     ra, 0(sp)
-      addi    sp, sp, 4
-      ret
-
+        ret
     """
 
     hp = new_start + asm
     obj = nios2_as(hp.encode("utf-8"))
-    r = require_symbols(obj, ["_start"])
+    r = require_symbols(obj, ["op_three", "_start"])
     if r is not None:
-        return (False, r)
+        print(r)
+        return
+
+    def bits2int(n):
+        return ctypes.c_int32(n).value
+
+    def int2bits(n):
+        return ctypes.c_uint32(n).value
+
+    class OpTwo:
+        def __init__(self, fn):
+            self.fn = fn
+            self.a = 0
+            self.result = 0
+
+        def set_a(self, val=None):
+            if val is not None:
+                self.a = bits2int(val)
+            return self.result
+
+        def compute(self, val=None):
+            if val is not None:
+                b = bits2int(val)
+                self.result = int2bits(self.fn(self.a, b))
+            return self.result
+
 
     test_cases = [
-        ([5, 3, 1 ], 9, 0),  # add
-        ([5, 3, 1 ], 15, 1), # mul
-        ([5, 3, 1 ], 7, 2) ,  # xor
+        ([5, 3, 1], 'add', lambda a, b: a + b, 9),
+        ([5, 3, 1], 'mul', lambda a, b: a * b, 15),
+        ([5, 3, 1], 'xor', lambda a, b: a ^ b, 7),
+        ([-1, 1, 1], 'add', lambda a, b: a + b, 1),
+        ([-10, 4, -3], 'add', lambda a, b: a + b, -9),
+        ([2, 3, 4], 'mul', lambda a, b: a * b, 24),
     ]
 
     cpu = Nios2(obj=obj)
 
-    feedback = ""
-    cur_test = 1
-    for arr, ans, op in test_cases:
-
-        # Reset and initialize
+    for i, (arr, op_name, op_fn, expected) in enumerate(test_cases):
+        op = OpTwo(op_fn)
         cpu.reset()
+        cpu.add_mmio(0x13371000, op.set_a)
+        cpu.add_mmio(0x13371004, op.compute)
 
         cpu.set_reg(4, np.uint32(np.int32(arr[0])))
         cpu.set_reg(5, np.uint32(np.int32(arr[1])))
         cpu.set_reg(6, np.uint32(np.int32(arr[2])))
-        cpu.set_reg(7, np.uint32(np.int32(op)))
 
-        # Run
-        instrs = cpu.run_until_halted(10000)
-        print("     instrs= %d " % instrs)
-        # Check answer
-        
-        their_ans = cpu.get_reg(2)
-        
-        if their_ans != ans:
-            feedback += "Failed test case %d with op %d: " % (cur_test, op)
-            feedback += "Your code produced O=0x%08x" % np.uint32(their_ans)
-            #feedback += "DEBUGGING// expcected O=0x%08x" % np.uint32(ans)
-            feedback += "<br/><br/>Memory:<br/><pre>"
-            feedback += cpu.dump_mem(0, 0x100)
-            feedback += "\nSymbols:\n" + cpu.dump_symbols()
-            feedback += "</pre>"
+        cpu.run_until_halted(100)
 
-            print('Error: %s' % feedback)
-            return (False, feedback)
+        their_ans = np.int32(np.uint32(cpu.get_reg(2)))
 
+        for addr, rid, _ in cpu.get_clobbered():
+            print('Warning: function @0x%08x clobbered r%d' % (addr, rid))
 
-        feedback += "Passed test case %d<br/>\n" % (cur_test)
-        cur_test += 1
+        if their_ans != np.int32(expected):
+            print('Failed test %d (op=%s, args=%s): got %d, expected %d' %
+                  (i + 1, op_name, arr, their_ans, expected))
+            print(get_debug(cpu, show_stack=True))
+            del cpu
+            return
 
+    del cpu
     print('Passed all tests')
 
 
 import sys
-check_op_three(sys.stdin.read())
+check_project3_1_2(sys.stdin.read())
