@@ -1,0 +1,2 @@
+STUDENT_NAME_LEN:    .word   5
+STUDENT_NAME:        .ascii "Name\x41"
