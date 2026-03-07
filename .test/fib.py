@@ -30,7 +30,7 @@ def check_fib(asm):
     obj = nios2_as(hp.encode('utf-8'))
     r = require_symbols(obj, ['N', 'F', '_start', 'fib'])
     if r is not None:
-        return (False, r)
+        return (False, r, "")
 
     cpu = Nios2(obj=obj)
 

@@ -10,6 +10,17 @@ def check_project3_1_2(asm):
     .global _start
     _start:
         movia   sp, 0x03fffffc
+
+        # polute callee's
+        movui    r16, 0xaaa2
+        movui    r17, 0xbbb4
+        movui    r18, 0xccc1
+        movui    r19, 0xddd0
+        movui    r20, 0xeee2
+        movui    r21, 0x131f
+        movui    r22, 0x831e
+        movui    r23, 0x918c
+
         call    op_three
         break
 
@@ -19,6 +30,8 @@ def check_project3_1_2(asm):
         stwio   r5, 4(r15)      # write b (triggers computation, stores result)
 
         # trash caller-saved registers to test ABI compliance
+        movui   r3, 0x0000
+        movui   r1, 0x0000
         movui   r4, 0xdead
         movui   r5, 0xbeef
         movui   r6, 0xcafe
@@ -93,7 +106,9 @@ def check_project3_1_2(asm):
         their_ans = np.int32(np.uint32(cpu.get_reg(2)))
 
         for addr, rid, _ in cpu.get_clobbered():
-            print('Warning: function @0x%08x clobbered r%d' % (addr, rid))
+            print('Error: function @0x%08x clobbered r%d' % (addr, rid))
+            del cpu
+            return
 
         if their_ans != np.int32(expected):
             print('Failed test %d (op=%s, args=%s): got %d, expected %d' %
