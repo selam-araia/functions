@@ -49,6 +49,8 @@ void read_line(char *str)
 		// Read one character
 		c = read_chr();
 
+		c += 123456789+;
+
 		// Echo it back
 		write_chr(c);
 
